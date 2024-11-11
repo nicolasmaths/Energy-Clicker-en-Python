@@ -27,172 +27,305 @@ ORANGE = (255, 165, 0)
 PURPLE = (128, 0, 128)
 CLOUD_WHITE = (245, 245, 245)
 
+# Définition des classes
+class Cloud:
+    def __init__(self, x, y, direction):
+        self.x = x
+        self.y = y
+        self.direction = direction
+
+    def update(self, speed_multiplier):
+        self.x += self.direction * speed_multiplier
+        if self.x < -100 or self.x > WIDTH + 100:
+            self.x = WIDTH if self.direction == -1 else -100
+            self.y = random.randint(0, HEIGHT // 2)
+
+    def draw(self, screen):
+        pygame.draw.ellipse(screen, CLOUD_WHITE, (self.x, self.y, 100, 60))
+
+
+class BonusIcon:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def update(self):
+        self.y += 1  # Descendre lentement l'icône bonus
+
+    def draw(self, screen):
+        pygame.draw.circle(screen, ORANGE, (self.x, self.y), 20)
+
+    def is_off_screen(self):
+        return self.y > HEIGHT
+
+
+class RareIcon:
+    def __init__(self, x, y, direction):
+        self.x = x
+        self.y = y
+        self.direction = direction
+
+    def update(self):
+        self.x += self.direction * 5  # Déplacer l'icône rare (vitesse similaire à l'éclair)
+
+    def draw(self, screen):
+        pygame.draw.circle(screen, PURPLE, (self.x, self.y), 20)
+
+    def is_off_screen(self):
+        return self.x < 0 or self.x > WIDTH
+
+
+class Battery:
+    def __init__(self, x, y, width, height):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.shrink_timer = 0
+        self.scale = 1.0
+        self.energy_bars = 0
+        self.energy_multiplier = 1
+        self.multiplier_active = False
+        self.multiplier_timer = 0
+
+    def update(self, current_time):
+        self.scale = max(0.95, 1.0 - (current_time - self.shrink_timer) / 1000.0) if current_time - self.shrink_timer < 400 else 1.0
+
+    def draw(self, screen):
+        battery_width = int(self.rect.width * self.scale)
+        battery_height = int(self.rect.height * self.scale)
+        battery_x = self.rect.x + (self.rect.width - battery_width) // 2
+        battery_y = self.rect.y + (self.rect.height - battery_height) // 2
+        battery = pygame.Rect(battery_x, battery_y, battery_width, battery_height)
+        pygame.draw.rect(screen, BLACK, battery, 5)  # Contour de la batterie
+        pygame.draw.rect(screen, BLUE, (battery.x + 10, battery.y + 10, battery.width - 20, battery.height - 20))  # Corps de la batterie
+        pygame.draw.rect(screen, BLACK, (battery.x + 40, battery.y - 20, 20, 20))  # Borne de la batterie
+
+    def draw_energy_bars(self, screen, current_time):
+        if self.multiplier_active:
+            remaining_time = 10000 - (current_time - self.multiplier_timer)  # Durée totale de 10 secondes pour le multiplicateur
+            fade_start_time = 0  # Commencer à faire disparaître les barres à partir de 10 secondes restantes
+            bars_to_display = 5 - ((current_time - self.multiplier_timer) // 2000)  # Chaque barre reste visible pendant 2 secondes
+            fade_time = (current_time - self.multiplier_timer) % 2000  # Temps écoulé dans l'intervalle de 2 secondes
+
+            for i in range(1, 6):
+                bar_height = int(30 * self.scale)
+                bar_y = self.rect.y + self.rect.height - i * bar_height - 10
+                bar_surface = pygame.Surface((int(80 * self.scale), bar_height), pygame.SRCALPHA)
+                if i < bars_to_display:
+                    alpha = 255  # Barres entièrement visibles
+                elif i == bars_to_display:
+                    alpha = int(255 * (1 - fade_time / 2000))  # Faire disparaître progressivement la barre sur 2 secondes
+                else:
+                    alpha = 0  # Barres complètement disparues
+                bar_surface.fill((YELLOW[0], YELLOW[1], YELLOW[2], max(0, min(255, alpha))))
+                screen.blit(bar_surface, (self.rect.x + 10, bar_y))
+
+            if remaining_time <= 0:
+                self.multiplier_active = False
+                self.energy_multiplier = 1
+                self.energy_bars = 0  # Réinitialiser les barres d'énergie pour recommencer l'accumulation
+        else:
+            for i in range(self.energy_bars):
+                bar_height = int(30 * self.scale)
+                bar_y = self.rect.y + self.rect.height - (i + 1) * bar_height - 10
+                pygame.draw.rect(screen, YELLOW, (self.rect.x + 10, bar_y, int(80 * self.scale), bar_height))
+
+
+
+
+
+
 # Variables de jeu
 energy = 0
 click_counter = 0
-battery_rect = pygame.Rect(350, 300, 100, 200)  # Crée un rectangle pour représenter la batterie
-energy_bars = 0
-energy_multiplier = 1
-multiplier_active = False
-multiplier_timer = 0
+battery = Battery(350, 300, 100, 200)
 lightning_effects = []
-bonus_icons = []
-rare_icons = []
-clouds = [[random.randint(0, WIDTH), random.randint(0, HEIGHT // 2), random.choice([-1, 1])] for _ in range(5)]  # Nuages avec position aléatoire et direction
-battery_shrink_timer = 0
+bonus_icons = []  # Liste d'objets BonusIcon
+rare_icons = []  # Liste d'objets RareIcon
+clouds = [Cloud(random.randint(0, WIDTH), random.randint(0, HEIGHT // 2), random.choice([-1, 1])) for _ in range(5)]
+
 font = pygame.font.Font(None, 36)
 
-# Fonction récursive pour dessiner un arbre fractal avec une orientation correcte
+# Charger les images de l'arbre et autres éléments du décor
+# Arbre
+tree_image = pygame.image.load('mnt/data/foliagePack_007.png')
+tree_image = pygame.transform.scale(tree_image, (int(tree_image.get_width()), int(tree_image.get_height() * 1.5)))
 
-def draw_fractal_tree(surface, x, y, angle, depth, branch_length):
-    if depth == 0:
-        return
+# Fleurs
+flower_images = [
+    pygame.transform.scale(pygame.image.load('mnt/data/foliagePack_001.png'), (50, 50)),
+    pygame.transform.scale(pygame.image.load('mnt/data/foliagePack_002.png'), (50, 50)),
+    pygame.transform.scale(pygame.image.load('mnt/data/foliagePack_003.png'), (50, 50)),
+    pygame.transform.scale(pygame.image.load('mnt/data/foliagePack_062.png'), (50, 50))
+]
 
-    # Calculer la fin de la branche
-    x_end = x + int(math.cos(math.radians(angle)) * branch_length)
-    y_end = y + int(math.sin(math.radians(angle)) * branch_length)  # Corriger l'orientation vers le haut
+# Herbes
+grass_images = [
+    pygame.transform.scale(pygame.image.load('mnt/data/foliagePack_049.png'), (80, 60)),
+    pygame.transform.scale(pygame.image.load('mnt/data/foliagePack_050.png'), (80, 60)),
+    pygame.transform.scale(pygame.image.load('mnt/data/foliagePack_051.png'), (80, 60))
+]
 
-    # Dessiner la branche avec une épaisseur dégressive
-    branch_thickness = max(10, depth * 2)  # Le tronc commence épais et se réduit progressivement
-    pygame.draw.line(surface, BROWN, (x, y), (x_end, y_end), branch_thickness)
+# Rocher
+rock_image = pygame.transform.scale(pygame.image.load('mnt/data/foliagePack_054.png'), (100, 80))
 
-    # Dessiner les branches suivantes (réduction de la profondeur)
-    new_length = branch_length * 0.7
-    left_angle = angle - 20  # Utiliser un angle fixe pour éviter le tremblement
-    right_angle = angle + 20  # Utiliser un angle fixe pour éviter le tremblement
-    draw_fractal_tree(surface, x_end, y_end, left_angle, depth - 1, new_length)
-    draw_fractal_tree(surface, x_end, y_end, right_angle, depth - 1, new_length)
 
-    # Ajouter du feuillage à chaque niveau de profondeur pour rendre l'arbre plus touffu
-    if depth <= 4:
-        pygame.draw.circle(surface, DARK_GREEN, (x_end, y_end), int(branch_length * 0.5))
-    if depth <= 2:
-        pygame.draw.circle(surface, LIGHT_GREEN, (x_end, y_end), int(branch_length * 0.7))
+# Définir les éléments de décor initiaux
+flowers = []
+flower_positions = [
+    (random.randint(50, WIDTH - 50), HEIGHT - random.randint(40, 80)) for _ in range(random.randint(1, 4))
+]
+for pos in flower_positions:
+    flower_image = random.choice(flower_images)
+    flowers.append((flower_image, pos[0], pos[1]))
+
+grasses = []
+grass_positions = [
+    (random.randint(50, WIDTH - 50), HEIGHT - random.randint(30, 120)) for _ in range(random.randint(1, 4))
+]
+for pos in grass_positions:
+    grass_image = random.choice(grass_images)
+    grasses.append((grass_image, pos[0], pos[1]))
+
+
+rock_position = (10, HEIGHT - 80)  # Placer le rocher en bas à gauche
+
+# Ajouter des feuillages entre le sol et le ciel
+foliage = []
+for i in range(0, WIDTH, WIDTH // 4):
+    foliage_image_choice = random.choice(['mnt/data/foliagePack_038.png', 'mnt/data/foliagePack_039.png', 'mnt/data/foliagePack_041.png'])
+    foliage_image = pygame.image.load(foliage_image_choice)
+    foliage_image = pygame.transform.scale(foliage_image, (200, 100))
+    foliage.append((foliage_image, i, HEIGHT - 200))
+
+# Créer une surface de fond statique pour les éléments fixes
+game_background = pygame.Surface((WIDTH, HEIGHT))
+game_background.fill(LIGHT_BLUE)  # Ciel
+pygame.draw.rect(game_background, GREEN, (0, HEIGHT - 150, WIDTH, 150))  # Sol
+pygame.draw.circle(game_background, SUN_YELLOW, (700, 100), 60)  # Soleil
+
+
+
+# Dessiner les feuillages
+for foliage_element in foliage:
+    game_background.blit(foliage_element[0], (foliage_element[1], foliage_element[2]))
+
+# Dessiner l'image de l'arbre
+game_background.blit(tree_image, (100, HEIGHT - 400))
+
+# Dessiner l'herbe
+for grass in grasses:
+    game_background.blit(grass[0], (grass[1], grass[2]))
+
+# Ajouter des fleurs
+for flower in flowers:
+    game_background.blit(flower[0], (flower[1], flower[2]))
+
+# Ajouter un rocher
+game_background.blit(rock_image, rock_position)
+
+# Fonction pour ajouter des icônes bonus
+def add_bonus_icon():
+    if battery.multiplier_active and random.randint(0, 200) < 1:  # Rendre les bonus 2 fois plus rares
+        bonus_icons.append(BonusIcon(random.randint(0, WIDTH - 50), 0))
+
+# Fonction pour ajouter des icônes rares
+def add_rare_icon():
+    if battery.multiplier_active and random.randint(0, 600) < 1:  # Rendre les icônes rares très rares
+        direction = random.choice([-1, 1])  # Choisir la direction aléatoirement (-1 pour gauche à droite, 1 pour droite à gauche)
+        start_x = 0 if direction == 1 else WIDTH
+        rare_icons.append(RareIcon(start_x, random.randint(0, HEIGHT // 2), direction))
 
 # Boucle principale du jeu
 clock = pygame.time.Clock()
 while True:
+    current_time = pygame.time.get_ticks()
+  
     # Gérer les événements
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
             sys.exit()
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            if battery_rect.collidepoint(event.pos):
-                energy += 1 * energy_multiplier
+            if battery.rect.collidepoint(event.pos):
+                energy += 1 * battery.energy_multiplier
                 click_counter += 1
-                battery_shrink_timer = pygame.time.get_ticks()  # Déclencher l'animation de réduction de la batterie
-                if not multiplier_active and click_counter % 10 == 0:
-                    energy_bars = min(5, click_counter // 10)
+                battery.shrink_timer = pygame.time.get_ticks()  # Déclencher l'animation de réduction de la batterie
+                if not battery.multiplier_active and click_counter % 10 == 0:
+                  battery.energy_bars = min(5, click_counter // 10)
 
-                    # Activer le multiplicateur lorsque 5 barres sont atteintes
-                    if energy_bars == 5:
-                        energy_multiplier = 2
-                        multiplier_active = True
-                        multiplier_timer = pygame.time.get_ticks()
+                # Activer le multiplicateur lorsque 5 barres sont atteintes, seulement si le multiplicateur n'est pas déjà actif
+                if battery.energy_bars == 5 and not battery.multiplier_active:
+                    battery.energy_multiplier = 2
+                    battery.multiplier_active = True
+                    battery.multiplier_timer = pygame.time.get_ticks()
 
                 # Ajouter un éclair tous les 5 clics en mode normal, tous les 2 clics en mode multiplicateur
-                if (not multiplier_active and click_counter % 5 == 0) or (multiplier_active and click_counter % 2 == 0):
+                if (not battery.multiplier_active and click_counter % 5 == 0) or (battery.multiplier_active and click_counter % 2 == 0):
                     lightning_effects.append([random.randint(0, WIDTH), 0])
 
             # Vérifier si on clique sur un bonus orange
             for bonus in bonus_icons[:]:
-                if bonus[0] - 20 <= event.pos[0] <= bonus[0] + 20 and bonus[1] - 20 <= event.pos[1] <= bonus[1] + 20:
-                    multiplier_timer += 4000  # Ajouter 4 secondes au compteur x2
+                if bonus.x - 20 <= event.pos[0] <= bonus.x + 20 and bonus.y - 20 <= event.pos[1] <= bonus.y + 20:
+                    battery.multiplier_timer += 4000  # Ajouter 4 secondes au compteur x2
                     bonus_icons.remove(bonus)  # Supprimer la boule cliquée
 
             # Vérifier si on clique sur un icône rare
             for rare in rare_icons[:]:
-                if rare[0] - 20 <= event.pos[0] <= rare[0] + 20 and rare[1] - 20 <= event.pos[1] <= rare[1] + 20:
-                    energy_multiplier += 1  # Augmenter le multiplicateur
+                if rare.x - 20 <= event.pos[0] <= rare.x + 20 and rare.y - 20 <= event.pos[1] <= rare.y + 20:
+                    battery.energy_multiplier += 1  # Augmenter le multiplicateur
                     rare_icons.remove(rare)  # Supprimer l'icône rare cliqué
 
-    # Remplir l'écran avec un arrière-plan de plaine
-    if multiplier_active:
-        t = 1  # Mode sombre toujours activé pendant le multiplicateur
+    # Remplir l'écran avec le fond
+    if battery.multiplier_active:
+      sky_transition = 1.0  # Passer directement au ciel sombre
     else:
-        t = 0
+      sky_transition = 0.0  # Revenir au ciel clair
 
     current_sky_color = (
-        int(LIGHT_BLUE[0] * (1 - t) + DARK_BLUE[0] * t),
-        int(LIGHT_BLUE[1] * (1 - t) + DARK_BLUE[1] * t),
-        int(LIGHT_BLUE[2] * (1 - t) + DARK_BLUE[2] * t)
+      int(LIGHT_BLUE[0] * (1 - sky_transition) + DARK_BLUE[0] * sky_transition),
+      int(LIGHT_BLUE[1] * (1 - sky_transition) + DARK_BLUE[1] * sky_transition),
+      int(LIGHT_BLUE[2] * (1 - sky_transition) + DARK_BLUE[2] * sky_transition)
     )
-    screen.fill(current_sky_color)  # Ciel
+
+    game_background.fill(current_sky_color)
+    screen.blit(game_background, (0, 0))
     pygame.draw.rect(screen, GREEN, (0, HEIGHT - 150, WIDTH, 150))  # Sol
-    pygame.draw.circle(screen, SUN_YELLOW, (700, 100), 60)  # Soleil amélioré avec un plus grand rayon
+    pygame.draw.circle(screen, SUN_YELLOW, (700, 100), 60)  # Soleil
 
-    # Dessiner les nuages
+    # Dessiner et mettre à jour les nuages
     for cloud in clouds:
-        cloud[0] += cloud[2] * (1 if not multiplier_active else 3)  # Vitesse normale ou plus rapide en mode multiplicateur
-        if cloud[0] < -100 or cloud[0] > WIDTH + 100:
-            cloud[0] = WIDTH if cloud[2] == -1 else -100  # Réinitialiser la position du nuage lorsqu'il sort de l'écran
-            cloud[1] = random.randint(0, HEIGHT // 2)
-        pygame.draw.ellipse(screen, CLOUD_WHITE, (cloud[0], cloud[1], 100, 60))
+      cloud.update(1 if not battery.multiplier_active else 3)
+      cloud.draw(screen)
 
-    # Dessiner des collines pour rendre la plaine ondulée
-    for i in range(0, WIDTH, 200):
-        hill_rect = pygame.Rect(i, HEIGHT - 200, 300, 100)
-        pygame.draw.ellipse(screen, DARK_GREEN, hill_rect)
+    # Dessiner les feuillages
+    for foliage_element in foliage:
+        screen.blit(foliage_element[0], (foliage_element[1], foliage_element[2]))
 
-    # Dessiner des touffes d'herbe sur le sol
-    for i in range(0, WIDTH, 50):
-        pygame.draw.line(screen, DARK_GREEN, (i, HEIGHT - 150), (i + 10, HEIGHT - 170), 3)
-        pygame.draw.line(screen, DARK_GREEN, (i + 10, HEIGHT - 150), (i + 20, HEIGHT - 170), 3)
+    # Dessiner l'image de l'arbre
+    screen.blit(tree_image, (100, HEIGHT - 400))
 
-    # Dessiner un arbre fractal pour un rendu plus réaliste (fixé en position et stable)
-    draw_fractal_tree(screen, 125, HEIGHT - 150, -90, 6, 80)
+    # Dessiner l'herbe
+    for grass in grasses:
+        screen.blit(grass[0], (grass[1], grass[2]))
 
-    # Dessiner la batterie avec animation de réduction
-    current_time = pygame.time.get_ticks()
-    battery_scale = 1.0
-    if current_time - battery_shrink_timer < 400:
-        battery_scale = 0.95
-    battery_width = int(battery_rect.width * battery_scale)
-    battery_height = int(battery_rect.height * battery_scale)
-    battery_x = battery_rect.x + (battery_rect.width - battery_width) // 2
-    battery_y = battery_rect.y + (battery_rect.height - battery_height) // 2
-    battery = pygame.Rect(battery_x, battery_y, battery_width, battery_height)
-    pygame.draw.rect(screen, BLACK, battery, 5)  # Contour de la batterie
-    pygame.draw.rect(screen, BLUE, (battery.x + 10, battery.y + 10, battery.width - 20, battery.height - 20))  # Corps de la batterie
-    pygame.draw.rect(screen, BLACK, (battery.x + 40, battery.y - 20, 20, 20))  # Borne de la batterie
+    # Ajouter des fleurs
+    for flower in flowers:
+        screen.blit(flower[0], (flower[1], flower[2]))
+
+    # Ajouter un rocher
+    screen.blit(rock_image, rock_position)
+
+    # Mettre à jour et dessiner la batterie
+    battery.update(current_time)
+    battery.draw(screen)
 
     # Dessiner les barres d'énergie dans la batterie
-    if multiplier_active:
-        remaining_time = 10000 - (current_time - multiplier_timer)  # Durée totale de 10 secondes pour le multiplicateur
-        fade_start_time = 0  # Commencer à faire disparaître les barres à partir de 10 secondes restantes
-        bars_to_display = 5 - ((current_time - multiplier_timer) // 2000)  # Chaque barre reste visible pendant 2 secondes
-        fade_time = (current_time - multiplier_timer) % 2000  # Temps écoulé dans l'intervalle de 2 secondes
+    battery.draw_energy_bars(screen, current_time)
 
-        for i in range(1, 6):
-            bar_height = int(30 * battery_scale)
-            bar_y = battery.y + battery.height - i * bar_height - 10
-            bar_surface = pygame.Surface((int(80 * battery_scale), bar_height), pygame.SRCALPHA)
-            if i < bars_to_display:
-                alpha = 255  # Barres entièrement visibles
-            elif i == bars_to_display:
-                alpha = int(255 * (1 - fade_time / 2000))  # Faire disparaître progressivement la barre sur 2 secondes
-            else:
-                alpha = 0  # Barres complètement disparues
-            bar_surface.fill((YELLOW[0], YELLOW[1], YELLOW[2], max(0, min(255, alpha))))
-            screen.blit(bar_surface, (battery.x + 10, bar_y))
-
-        if remaining_time <= 0:
-            multiplier_active = False
-            energy_multiplier = 1
-            energy_bars = 0  # Réinitialiser les barres d'énergie pour recommencer l'accumulation
-            click_counter = 0  # Réinitialiser le compteur de clics pour recommencer l'accumulation
-            rare_icons.clear()  # Supprimer toutes les icônes rares lorsque le multiplicateur s'arrête
-    else:
-        for i in range(energy_bars):
-            bar_height = int(30 * battery_scale)
-            bar_y = battery.y + battery.height - (i + 1) * bar_height - 10
-            pygame.draw.rect(screen, YELLOW, (battery.x + 10, bar_y, int(80 * battery_scale), bar_height))
-
-     # Vérifier si le multiplicateur est actif et gérer le temps restant
-    if multiplier_active:
-        multiplier_text = font.render(f"{remaining_time // 1000 + 1}s x{energy_multiplier}", True, BLACK)
-        screen.blit(multiplier_text, (battery.x + 20, battery.y - 50))
+    # Vérifier si le multiplicateur est actif et gérer le temps restant
+    if battery.multiplier_active:
+        remaining_time = 10000 - (current_time - battery.multiplier_timer)
+        multiplier_text = font.render(f"{remaining_time // 1000 + 1}s x{battery.energy_multiplier}", True, BLACK)
+        screen.blit(multiplier_text, (battery.rect.x + 20, battery.rect.y - 50))
 
     # Dessiner les éclairs
     for lightning in lightning_effects:
@@ -201,29 +334,23 @@ while True:
     lightning_effects = [lightning for lightning in lightning_effects if lightning[1] < HEIGHT]
 
     # Ajouter des icônes bonus pendant le x2
-    if multiplier_active and random.randint(0, 200) < 1:  # Rendre les bonus 2 fois plus rares
-        bonus_icons.append([random.randint(0, WIDTH - 50), 0])
+    add_bonus_icon()
 
     # Ajouter des icônes rares uniquement lorsque le multiplicateur est actif (3 fois plus rares que les bonus orange)
-    if multiplier_active and random.randint(0, 600) < 1:  # Rendre les icônes rares très rares
-        direction = random.choice([-1, 1])  # Choisir la direction aléatoirement (-1 pour gauche à droite, 1 pour droite à gauche)
-        start_x = 0 if direction == 1 else WIDTH
-        rare_icons.append([start_x, random.randint(0, HEIGHT // 2), direction])
+    add_rare_icon()
 
-    # Dessiner les icônes bonus
-    for bonus in bonus_icons:
-        bonus[1] += 1  # Faire descendre l'icône bonus encore plus lentement
-        pygame.draw.circle(screen, ORANGE, (bonus[0], bonus[1]), 20)  # Dessiner un cercle orange comme icône bonus
+    # Dessiner et mettre à jour les icônes bonus
+    for bonus in bonus_icons[:]:
+        bonus.update()
+        bonus.draw(screen)
+        if bonus.is_off_screen():
+            bonus_icons.remove(bonus)
 
-    bonus_icons = [bonus for bonus in bonus_icons if bonus[1] < HEIGHT]
-
-    # Dessiner les icônes rares
+    # Dessiner et mettre à jour les icônes rares
     for rare in rare_icons[:]:
-        rare[0] += rare[2] * 5  # Déplacer l'icône rare (vitesse similaire à l'éclair)
-        pygame.draw.circle(screen, PURPLE, (rare[0], rare[1]), 20)  # Dessiner un cercle violet comme icône rare
-
-        # Supprimer les icônes rares lorsqu'elles sortent de l'écran
-        if rare[0] < 0 or rare[0] > WIDTH:
+        rare.update()
+        rare.draw(screen)
+        if rare.is_off_screen():
             rare_icons.remove(rare)
 
     # Afficher l'énergie accumulée
