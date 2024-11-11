@@ -29,10 +29,11 @@ CLOUD_WHITE = (245, 245, 245)
 
 # Définition des classes
 class Cloud:
-    def __init__(self, x, y, direction):
+    def __init__(self, x, y, direction, image):
         self.x = x
         self.y = y
         self.direction = direction
+        self.image = image
 
     def update(self, speed_multiplier):
         self.x += self.direction * speed_multiplier
@@ -41,19 +42,20 @@ class Cloud:
             self.y = random.randint(0, HEIGHT // 2)
 
     def draw(self, screen):
-        pygame.draw.ellipse(screen, CLOUD_WHITE, (self.x, self.y, 100, 60))
+        screen.blit(self.image, (self.x, self.y))
 
 
 class BonusIcon:
-    def __init__(self, x, y):
+    def __init__(self, x, y, image):
         self.x = x
         self.y = y
+        self.image = image
 
     def update(self):
         self.y += 1  # Descendre lentement l'icône bonus
 
     def draw(self, screen):
-        pygame.draw.circle(screen, ORANGE, (self.x, self.y), 20)
+        screen.blit(self.image, (self.x, self.y))
 
     def is_off_screen(self):
         return self.y > HEIGHT
@@ -119,9 +121,12 @@ class Battery:
                 screen.blit(bar_surface, (self.rect.x + 10, bar_y))
 
             if remaining_time <= 0:
-                self.multiplier_active = False
-                self.energy_multiplier = 1
-                self.energy_bars = 0  # Réinitialiser les barres d'énergie pour recommencer l'accumulation
+              self.multiplier_active = False
+              self.energy_multiplier = 1
+              self.energy_bars = 0
+              global click_counter
+              click_counter = 0  # Réinitialiser le compteur de clics pour recommencer l'accumulation
+
         else:
             for i in range(self.energy_bars):
                 bar_height = int(30 * self.scale)
@@ -139,8 +144,14 @@ click_counter = 0
 battery = Battery(350, 300, 100, 200)
 lightning_effects = []
 bonus_icons = []  # Liste d'objets BonusIcon
+energy_icon = pygame.image.load('mnt/data/energie.png')
+energy_icon = pygame.transform.scale(energy_icon, (40, 40))
 rare_icons = []  # Liste d'objets RareIcon
-clouds = [Cloud(random.randint(0, WIDTH), random.randint(0, HEIGHT // 2), random.choice([-1, 1])) for _ in range(5)]
+cloud_images = [
+    pygame.image.load('mnt/data/background_cloudA.png'),
+    pygame.image.load('mnt/data/background_cloudB.png')
+]
+clouds = [Cloud(random.randint(0, WIDTH), random.randint(0, HEIGHT // 2), random.choice([-1, 1]), random.choice(cloud_images)) for _ in range(5)]
 
 font = pygame.font.Font(None, 36)
 
@@ -148,6 +159,19 @@ font = pygame.font.Font(None, 36)
 # Arbre
 tree_image = pygame.image.load('mnt/data/foliagePack_007.png')
 tree_image = pygame.transform.scale(tree_image, (int(tree_image.get_width()), int(tree_image.get_height() * 1.5)))
+
+# La particule jaune
+trace_image = pygame.image.load('mnt/data/trace_01.png')
+trace_image = pygame.transform.scale(trace_image, (40, 40))
+trace_image = trace_image.convert_alpha()  # Convertir pour la transparence et le traitement des pixels
+
+# Remplacer le blanc par du jaune
+for x in range(trace_image.get_width()):
+    for y in range(trace_image.get_height()):
+        r, g, b, a = trace_image.get_at((x, y))
+        if r == 255 and g == 255 and b == 255:  # Si le pixel est blanc
+            trace_image.set_at((x, y), (YELLOW[0], YELLOW[1], YELLOW[2], a))
+
 
 # Fleurs
 flower_images = [
@@ -225,7 +249,7 @@ game_background.blit(rock_image, rock_position)
 # Fonction pour ajouter des icônes bonus
 def add_bonus_icon():
     if battery.multiplier_active and random.randint(0, 200) < 1:  # Rendre les bonus 2 fois plus rares
-        bonus_icons.append(BonusIcon(random.randint(0, WIDTH - 50), 0))
+        bonus_icons.append(BonusIcon(random.randint(0, WIDTH - 50), 0, energy_icon))
 
 # Fonction pour ajouter des icônes rares
 def add_rare_icon():
@@ -264,7 +288,7 @@ while True:
 
             # Vérifier si on clique sur un bonus orange
             for bonus in bonus_icons[:]:
-                if bonus.x - 20 <= event.pos[0] <= bonus.x + 20 and bonus.y - 20 <= event.pos[1] <= bonus.y + 20:
+                if bonus.x <= event.pos[0] <= bonus.x + energy_icon.get_width() and bonus.y <= event.pos[1] <= bonus.y + energy_icon.get_height():
                     battery.multiplier_timer += 4000  # Ajouter 4 secondes au compteur x2
                     bonus_icons.remove(bonus)  # Supprimer la boule cliquée
 
@@ -305,7 +329,7 @@ while True:
 
     # Dessiner l'herbe
     for grass in grasses:
-        screen.blit(grass[0], (grass[1], grass[2]))
+      screen.blit(grass[0], (grass[1], grass[2]))
 
     # Ajouter des fleurs
     for flower in flowers:
@@ -327,10 +351,10 @@ while True:
         multiplier_text = font.render(f"{remaining_time // 1000 + 1}s x{battery.energy_multiplier}", True, BLACK)
         screen.blit(multiplier_text, (battery.rect.x + 20, battery.rect.y - 50))
 
-    # Dessiner les éclairs
+    # Remplacer l'éclair jaune par l'image "trace_image"
     for lightning in lightning_effects:
-        lightning[1] += 5  # Faire descendre l'éclair
-        pygame.draw.line(screen, YELLOW, (lightning[0], lightning[1]), (lightning[0], lightning[1] + 20), 5)
+      lightning[1] += 5  # Faire descendre l'éclair
+      screen.blit(trace_image, (lightning[0] - trace_image.get_width() // 2, lightning[1]))
     lightning_effects = [lightning for lightning in lightning_effects if lightning[1] < HEIGHT]
 
     # Ajouter des icônes bonus pendant le x2
